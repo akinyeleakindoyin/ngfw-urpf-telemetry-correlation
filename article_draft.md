@@ -70,8 +70,7 @@ Simultaneously, the outside interfaces of the perimeter gateway are hardened usi
 When an inbound frame strikes the interface, the firewall's hardware-accelerated security path evaluates the source IP address against its local Routing Information Base (RIB) to confirm return-path validity:
 
 ```text
-If Route(IPSource) ≠ InterfaceIngress
-        → Drop Packet (Stateless Alert)
+If Route(*IP<sub>Source</sub>*) ≠ Interface<sub>Ingress</sub> → Drop Packet (Stateless Alert)
 ```
 
 Under normal operational parameters, this stateless validation ring immediately drops spoofed traffic vectors before they can consume stateful firewall control-plane resources.
