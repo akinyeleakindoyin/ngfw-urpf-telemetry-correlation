@@ -1,0 +1,1 @@
+TCP PAT from Inside:10.0.1.50/51543 to Outside:203.0.113.12/51543 flags ri idle 0:00:00 timeout 0:00:30
