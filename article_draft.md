@@ -93,7 +93,64 @@ When analyzing isolated security-path logs (such as Cisco ASP drops or equivalen
 
 $$\text{Timestamp} \quad \text{Gateway} \textunderscore \text{ID} \quad \text{Action: Deny TCP reverse path check from } IP_{ExtA} \text{ to } IP_{ExtB} \text{ on interface}$$
 
-Because the security path drops the packet immediately upon Layer 3 validation failure, the resulting telemetry completely discards Layer 4 state context, application identifiers, and transport-layer tracking variables.
+### Vendor-Specific Security Path Correlation Runbooks
+
+Because standard syslog messages (for example, Cisco ASA/FTD Message `106021`) are generated statelessly, they omit critical transport-layer metadata required to identify the true origin of reverse-path failures. To expose the ephemeral source ports driving the event pattern, engineers must capture packets directly from the hardware security path before buffer erasure occurs.
+
+---
+
+### Cisco ASA/FTD (Lina Engine) Unmasking Runbook
+
+Instantiating a circular Accelerated Security Path (ASP) capture isolates the precise ingress frames failing reverse-path validation:
+
+```bash
+capture UNMASK_RPF type asp-drop rpf-violation buffer 33554432 circular
+```
+
+Evaluating the resulting capture buffer reveals the underlying transport signature:
+
+```text
+cisco-firewall# show capture UNMASK_RPF | include 203.0.113.12
+23:25:42.104486 203.0.113.12.59144 > 198.51.100.7.7680: S 3483272189:3483272189(0)
+23:26:45.988275 203.0.113.12.63734 > 198.51.100.7.7680: S 164248457 Drop-reason: (rpf-violated) Reverse-path verify failed
+```
+
+Analysis consistently demonstrates changing ephemeral source ports while preserving a fixed destination service port (`7680`), indicating application-driven peer discovery rather than random routing asymmetry.
+
+---
+
+### Palo Alto Networks (PAN-OS) Cross-Reference Runbook
+
+On PAN-OS gateways, equivalent conditions increment global counters such as:
+
+- `flow_rcv_dot1q_tag_err`
+- `flow_fwd_urpf_fail`
+
+To inspect the associated packet payloads directly from the dataplane engine:
+
+```bash
+debug dataplane packet-diag set filter source 203.0.113.12
+debug dataplane packet-diag set filter drop rpf
+debug dataplane packet-diag set capture on
+view-pcap filter-pcap debug-pcap
+```
+
+This workflow enables correlation between dataplane packet captures and reverse-path enforcement statistics, exposing the transport-layer characteristics hidden by standard logging.
+
+---
+
+### Fortinet (FortiGate) Cross-Reference Runbook
+
+On FortiOS appliances, uRPF-dropped packets typically bypass normal traffic-log generation. Capturing them requires real-time kernel-level inspection.
+
+```bash
+diagnose sniffer packet any "src host 203.0.113.12 and port 7680" 4 0 a
+diagnose debug flow filter src 203.0.113.12
+diagnose debug flow trace start 20
+diagnose debug enable
+```
+
+---
 
 To overcome this systemic visibility gap, deep-packet security path filtering must be enabled to intercept dropped headers before buffer erasure. Micro-captures targeting the external PAT pools consistently isolate a deterministic transport signature:
 
