@@ -1,8 +1,7 @@
 # How Multi-Plane Telemetry Isolated a 73-Million-Event Pattern Inside a 237-Million-Event uRPF Storm
 
-## Correlating Cisco Secure Firewall 106021 events, NAT state, endpoint captures, and Windows Delivery Optimization telemetry
+### Correlating Cisco Secure Firewall 106021 events, NAT state, endpoint captures, and Windows Delivery Optimization telemetry
 
-<!-- PUBLICATION MASTER v1.0 PRODUCTION NOTE: Figures are linked with relative paths in publication_assets/. Keep the Markdown file and that folder together, or replace each path with the final hosted image URL. Complete the remaining timestamp-source and disclosure checks before external submission. -->
 
 A Cisco Secure Firewall `106021` event tells an engineer that a packet failed reverse-path validation. It does not necessarily identify the endpoint that generated the packet, the application responsible for it, or the complete path that brought it to the receiving interface.
 
@@ -24,7 +23,7 @@ The investigation therefore correlated evidence across several planes:
 
 For a sampled TCP/7680 flow, the endpoint capture, NAT state, ASP capture, and firewall event formed a direct evidence chain. The firewall-side records were displayed in UTC, while the workstation capture displayed Pacific Daylight Time (PDT, UTC−7). After UTC-to-PDT normalization, the endpoint and ASP captures showed the same retransmission pattern with a stable residual offset of approximately 328–329 milliseconds. The firewall-management platform and workstation were synchronized to the same enterprise NTP service; because the complete timestamp-production path from the FTD/Lina sensor through the management platform was not independently measured, the residual is treated as a capture-point or timestamping offset. Later Delivery Optimization logs corroborated the application behavior, although the original application ETL data for the sampled date was no longer available.
 
-A subsequent policy change moved Windows Delivery Optimization from download mode `2` to mode `1`. In the post-change capture, no traffic matched the previously observed enterprise-public-address and port-7680 pattern.
+A subsequent policy change moved Windows Delivery Optimization from download mode `2` to mode `1`. In the post-change capture, the visible enterprise-public-address and port-7680 filter displayed no packets.
 
 The investigation established the cause of sampled and repeatedly correlated TCP/7680 flows. It did not independently attribute every record in the full dashboard population.
 
@@ -72,15 +71,30 @@ Reverse-path filtering is an important anti-spoofing control, but strict validat
 The investigation used evidence from three primary planes and connected them through a normalized timeline.
 
 ```text
-+--------------------------+     +--------------------------+     +--------------------------+     +--------------------------+
-|      SECURITY PLANE      |     |    TRANSLATION PLANE     |     |       ENDPOINT PLANE     |     |  NORMALIZED EVENT TIME   |
-|                          |     |                          |     |                          |     |                          |
-| - 106021 event           |     | - NAT/PAT mapping        |     | - Host packet capture    |     | Tuple + flags + cadence  |
-| - ASP drop capture       | --> | - Local and global ports | --> | - Application logs       | --> | + observation window     |
-| - Ingress interface      |     | - Internal source        |     | - Registry/policy state  |     |                          |
-| - Drop reason            |     | - Translation state      |     | - Process or service     |     |                          |
-| - Translated packet      |     |                          |     |                          |     |                          |
-+--------------------------+     +--------------------------+     +--------------------------+     +--------------------------+
++----------------------+   +----------------------+   +----------------------+
+| SECURITY EVIDENCE    |   | TRANSLATION EVIDENCE |   | ENDPOINT EVIDENCE    |
+|                      |   |                      |   |                      |
+| - 106021 event       |   | - NAT/PAT mapping    |   | - Host capture       |
+| - ASP drop capture   |   | - Local/global ports |   | - Application logs   |
+| - Ingress interface  |   | - Internal source    |   | - Registry/policy    |
+| - Drop reason        |   | - Translation state  |   | - Process/service    |
++----------+-----------+   +----------+-----------+   +----------+-----------+
+           \                         |                         /
+            \________________________|________________________/
+                                     |
+                                     v
+                         +--------------------------+
+                         | NORMALIZED TIMELINE      |
+                         |                          |
+                         | Tuple + flags + cadence  |
+                         | + observation window     |
+                         +------------+-------------+
+                                      |
+                                      v
+                         +--------------------------+
+                         | BEST-SUPPORTED           |
+                         | EXPLANATION              |
+                         +--------------------------+
 ```
 
 Each plane answers a different question.
@@ -114,12 +128,6 @@ The case involved an enterprise perimeter with multiple public PAT addresses ser
 
 *Figure 1 — Sanitized topology and evidence-bounded packet path. Endpoint evidence establishes the original TCP connection from `<INTERNAL-HOST>:51543` to `<PAT-B>:7680`. NAT state associates that socket with the translated public source `<PAT-A>:51543`, and ASP evidence shows the translated SYN appearing on `Outside-B` toward `<PAT-B>:7680`, where it fails reverse-path validation. The intermediate provider-side transit was not captured and is intentionally shown as an unobserved segment.*
 
-In this model:
-
-- `<PAT-A>` represents the public address used to translate the source endpoint.
-- `<PAT-B>` represents an enterprise-owned public address selected as the destination.
-- `<INTERNAL-HOST>` represents the originating Windows endpoint.
-- TCP `7680` represents the observed destination service.
 
 The exact provider-side path was not captured. Figure 1 therefore represents the logical packet sequence supported by endpoint, NAT, and firewall evidence rather than claiming visibility into every external hop.
 
@@ -133,8 +141,6 @@ The investigative question was:
 - Cisco Secure Firewall 7.6.4 managed by FMC 7.6.5 (build 106)
 - Windows 11 Enterprise 25H2 (build 26200.8457)
 - Delivery Optimization configured through Group Policy
-
-<!-- AUTHOR VERIFICATION PLACEHOLDER: Confirm whether the FTD/Lina sensor that produced the ASP timestamps was synchronized to the same enterprise NTP source as the workstation. If confirmed, replace the cautious timestamp-source wording in Sections 6 and A.4 with “The FTD sensor and workstation were synchronized to the same enterprise NTP service.” Add exact minor releases where disclosure is permitted. -->
 
 
 ## 4. Initial Explanations Considered
@@ -171,7 +177,7 @@ The population was measured from the **Cisco Secure Firewall Overview** dashboar
 event.code : "106021"
 ```
 
-The enterprise-PAT subset was produced by adding a dashboard filter that ORed the selected PAT addresses in the `source.ip` field. The displayed time range was June 1, 2026, at 00:00 through July 1, 2026, at 00:00.
+The enterprise-PAT subset was produced by adding a dashboard filter that combined the selected PAT addresses with Boolean `OR` conditions in the `source.ip` field. The displayed time range was June 1, 2026, at 00:00 through July 1, 2026, at 00:00.
 
 The dashboard displayed `237.42m` total records for the base query and `73.52m` after the source-IP filter was applied. These are dashboard-reported values. The screenshots do not independently establish the underlying Elastic data view, raw-document versus dashboard-aggregation behavior, or duplicate-ingestion treatment.
 
@@ -216,7 +222,7 @@ TCP SYN
 Drop reason: rpf-violated
 ```
 
-The source port changed across connection attempts, but the destination port remained TCP `7680`.
+Across separate connection attempts, the source port varied while the destination remained TCP `7680`. Within the sampled retransmission sequence examined later, the same source port (`51543`) remained associated with all five SYN attempts.
 
 This changed the direction of the investigation. A repeated destination port suggested a specific service or application workflow rather than arbitrary Layer 3 traffic. It did not, by itself, eliminate asymmetric routing. An application flow can still experience an asymmetric path. The port pattern provided a lead, not proof.
 
@@ -378,7 +384,7 @@ Not all evidence in the investigation carries the same weight or refers to the s
 | **Configuration evidence** | Pre-change `DODownloadMode = 2` | Confirms Delivery Optimization group mode was configured | Configuration alone does not prove ownership of one socket |
 | **Application-attribution evidence** | Delivery Optimization logs showing peer attempts toward the same public-address group on TCP/7680 | Corroborates the Delivery Optimization peer behavior | Logs are from a later date, not the exact sampled connection |
 | **Intervention evidence** | `DODownloadMode` changed to `1` | Confirms the intended peer-scope change | Does not by itself demonstrate traffic impact |
-| **Post-change validation** | Zero matches in the targeted post-change capture | Shows the previously observed pattern was absent during that capture | Does not establish permanent or enterprise-wide elimination |
+| **Post-change validation** | Zero packets displayed by the visible post-change filter | Shows that the visible filter returned no packets during that capture | Does not establish permanent or enterprise-wide elimination |
 | **Inference** | The public address was learned or received as a Delivery Optimization peer candidate | Best explains why the endpoint selected an enterprise public address | The complete cloud peer-list exchange was not captured |
 | **Unavailable evidence** | Original incident-date Delivery Optimization ETL | Would have provided same-time application evidence | The ETL data had been overwritten |
 | **Unavailable evidence** | Complete provider-side packet path | Would show every external hop and re-entry path | Not captured |
@@ -452,7 +458,7 @@ This assessment does not establish that asymmetric routing was absent from every
 
 For the sampled and correlated flows, an internal Windows endpoint initiated Delivery Optimization peer connections to enterprise-owned public PAT addresses over TCP/7680. Active NAT state mapped the endpoint socket to the apparent public source in the ASP capture, where the translated SYN failed reverse-path validation and generated the associated `106021` context.
 
-After `DODownloadMode` changed from `2` to `1`, the targeted public-address/7680 pattern was absent from the post-change endpoint capture. This intervention strengthens the conclusion that Delivery Optimization peer scope drove the sampled connection pattern. It does not prove that every record in the full dashboard population had the same origin.
+After `DODownloadMode` changed from `2` to `1`, the visible public-address/7680 filter displayed no packets in the post-change endpoint capture. This intervention strengthens the conclusion that Delivery Optimization peer scope drove the sampled connection pattern. It does not prove that every record in the full dashboard population had the same origin.
 
 ## 12. Operational Response
 
@@ -524,7 +530,7 @@ The before-change and post-change packet captures used the same visible Wireshar
 
 ### 13.1 Before-and-after result
 
-| Condition | Delivery Optimization mode | Total captured packets | Target-pattern matches |
+| Condition | Delivery Optimization mode | Total captured packets | Packets displayed by visible filter |
 |---|---:|---:|---:|
 | Before change | `2` | `1,320` | `136` |
 | After change | `1` | `353,129` | `0` |
@@ -533,7 +539,7 @@ The original full-resolution Wireshark status bar shows `353,129` total packets 
 
 The defensible conclusion is:
 
-> No traffic matching the previously observed public-address and port-7680 pattern was observed during the post-change capture.
+> No packets were displayed by the visible public-address and port-7680 filter during the post-change capture.
 
 This result supports the conclusion that Delivery Optimization peer scope was responsible for the sampled public-address connection pattern.
 
@@ -554,9 +560,9 @@ It does not prove that:
 | Pre-change mode | `2` |
 | Post-change mode | `1` |
 | Before total packets | `1,320` |
-| Before matching packets | `136` |
+| Before packets displayed by visible filter | `136` |
 | After total packets | `353,129` |
-| After matching packets | `0` |
+| After packets displayed by visible filter | `0` |
 | Capture duration | Not shown |
 | Capture interface | Not explicitly documented |
 | Equivalent update workload | Not documented |
@@ -565,7 +571,7 @@ It does not prove that:
 <!-- FIGURE 5 REFERENCE PLACEHOLDER -->
 ![Figure 5 — Intervention and post-change endpoint validation](publication_assets/figure-5-post-change-validation.png)
 
-*Figure 5 — Intervention and post-change endpoint validation. Panel A confirms `DODownloadMode = 1`. Panel B shows the before-change targeted capture with `1,320` total packets and `136` displayed matches. Panel C shows the post-change targeted capture with `353,129` total packets and zero displayed matches. Capture duration and Delivery Optimization workload were not controlled, so the figure demonstrates absence of the pattern during the observed window rather than a normalized reduction rate or permanent enterprise-wide elimination.*
+*Figure 5 — Intervention and post-change endpoint validation. Panel A confirms `DODownloadMode = 1`. Panel B shows the before-change capture with `1,320` total packets and `136` packets displayed by the visible filter. Panel C shows the post-change capture with `353,129` total packets and zero packets displayed by the same visible filter. Capture duration and Delivery Optimization workload were not controlled, so the figure demonstrates the filter result during the observed window rather than a normalized reduction rate or permanent enterprise-wide elimination.*
 
 ## 14. Reusable Investigation Workflow
 
@@ -693,7 +699,7 @@ The endpoint, NAT, ASP, and syslog evidence established external re-entry and re
 
 ### 15.5 The post-change test was bounded
 
-The post-change endpoint capture showed no traffic matching the previously observed enterprise-public-address and TCP/UDP 7680 filter. Capture duration, equivalent update activity, and long-term recurrence were not documented.
+The post-change endpoint capture displayed no packets under the previously used enterprise-public-address and TCP/UDP 7680 filter. Capture duration, equivalent update activity, and long-term recurrence were not documented.
 
 ### 15.6 Long-term event-volume validation remains outstanding
 
@@ -727,7 +733,7 @@ The sampled evidence chain established that:
 - The translated SYN appeared on an external ingress path and failed reverse-path validation.
 - After UTC-to-PDT normalization, the endpoint and ASP captures showed the same five-attempt retransmission pattern with a stable 328–329 ms residual timestamp offset.
 - Delivery Optimization configuration and later application logs supported Windows Delivery Optimization as the originating service.
-- After `DODownloadMode` changed from `2` to `1`, the targeted public-address/7680 pattern was absent from a subsequent endpoint capture.
+- After `DODownloadMode` changed from `2` to `1`, the visible public-address/7680 filter displayed no packets in a subsequent endpoint capture.
 
 The evidence directly explains sampled and repeatedly correlated flows. It does not independently attribute every record in the complete dashboard population.
 
@@ -878,7 +884,7 @@ Preserve the original application logs when possible. Later logs may corroborate
 
 Use explicit Boolean grouping so the address restriction applies to both transport protocols:
 
-$$\text{ip.addr } {in} \lbrace \text{PAT-A} \, \text{ PAT-B} \, \text{ PAT-C } \rbrace \text{ } {and} \text{ \( tcp\.port \=\= 7680} {or} \text{ udp\.port \=\= 7680\)} $$
+$$\text{ip.addr } {in} \lbrace \text{PAT-A},\,\text{PAT-B},\,\text{PAT-C} \rbrace \text{ } {and} \text{ } \left(\text{tcp.port} == 7680 \text{ } {or} \text{ } \text{udp.port} == 7680\right)$$
 
 Copyable Wireshark form:
 
@@ -889,7 +895,7 @@ and (tcp.port == 7680 or udp.port == 7680)
 
 The evidence screenshots displayed the following unparenthesized expression:
 
-$$\text{ip.addr } {in} \lbrace \text{PAT-A} \, \text{ PAT-B} \, \text{ PAT-C } \rbrace \text{ } {and} \text{ tcp\.port \=\= 7680} {or} \text{ udp\.port \=\= 7680} $$
+$$\text{ip.addr } {in} \lbrace \text{PAT-A},\,\text{PAT-B},\,\text{PAT-C} \rbrace \text{ } {and} \text{ tcp.port} == 7680 \text{ } {or} \text{ udp.port} == 7680$$
 
 Because `and` and `or` precedence can make the UDP condition evaluate more broadly than intended, future captures should use the parenthesized form. The same visible expression was used in the supplied before-and-after screenshots, and the post-change capture displayed zero matches; nevertheless, the corrected filter is preferable for a controlled repeat test.
 
