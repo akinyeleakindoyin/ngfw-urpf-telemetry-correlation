@@ -1,14 +1,16 @@
-# How Multi-Plane Telemetry Explained a 211-Million-Event uRPF Storm
+# How Multi-Plane Telemetry Isolated a 73-Million-Event Pattern Inside a 237-Million-Event uRPF Storm
 
 ## Correlating Cisco Secure Firewall 106021 events, NAT state, endpoint captures, and Windows Delivery Optimization telemetry
 
-> **Draft status:** Publication-production draft. Public and private addresses are represented by placeholders. Replace the diagram and figure placeholders with cropped, readable, and sanitized evidence before submission. Items marked **Author verification required** must be completed from the original SIEM query or capture metadata rather than inferred.
+<!-- PUBLICATION MASTER v1.0 PRODUCTION NOTE: Figures are linked with relative paths in publication_assets/. Keep the Markdown file and that folder together, or replace each path with the final hosted image URL. Complete the remaining timestamp-source and disclosure checks before external submission. -->
 
 A Cisco Secure Firewall `106021` event tells an engineer that a packet failed reverse-path validation. It does not necessarily identify the endpoint that generated the packet, the application responsible for it, or the complete path that brought it to the receiving interface.
 
-That distinction became important during an investigation into approximately 211 million `106021` events observed during the May 1-to-June 1, 2026 observation window. A substantial subset involved a small group of enterprise-owned public Port Address Translation (PAT) addresses. At first glance, traffic appearing to originate from one public PAT address and target another looked consistent with persistent asymmetric routing or externally spoofed traffic.
+That distinction became important during an investigation into about **237.4 million** Cisco Secure Firewall `106021` records reported by an Elastic-based firewall dashboard during the 30-day window from June 1, 2026, at 00:00 through July 1, 2026, at 00:00. Applying a `source.ip` filter for the selected enterprise-owned PAT address group returned about **73.5 million** records concentrated on one of the two firewalls represented in the base result.
 
-The Layer 3 syslog evidence was not sufficient to prove either explanation.
+At first glance, the relationship between enterprise-owned public PAT addresses looked consistent with persistent asymmetric routing or externally spoofed traffic.
+
+The Layer 3 syslog evidence was not sufficient to distinguish between those explanations.
 
 The investigation therefore correlated evidence across several planes:
 
@@ -20,11 +22,11 @@ The investigation therefore correlated evidence across several planes:
 - Delivery Optimization application logs
 - Post-change endpoint validation
 
-For a sampled TCP/7680 flow, the endpoint capture, NAT state, ASP capture, and firewall event formed a direct evidence chain. The firewall and workstation used the same enterprise NTP source, but the firewall recorded UTC while the workstation capture displayed Pacific Daylight Time (PDT, UTC−7). After UTC-to-PDT normalization, the endpoint and firewall captures showed the same retransmission pattern with a stable residual offset of approximately 328–329 milliseconds. Later Delivery Optimization logs corroborated the application behavior, although the original application ETL data for the sampled date was no longer available.
+For a sampled TCP/7680 flow, the endpoint capture, NAT state, ASP capture, and firewall event formed a direct evidence chain. The firewall-side records were displayed in UTC, while the workstation capture displayed Pacific Daylight Time (PDT, UTC−7). After UTC-to-PDT normalization, the endpoint and ASP captures showed the same retransmission pattern with a stable residual offset of approximately 328–329 milliseconds. The firewall-management platform and workstation were synchronized to the same enterprise NTP service; because the complete timestamp-production path from the FTD/Lina sensor through the management platform was not independently measured, the residual is treated as a capture-point or timestamping offset. Later Delivery Optimization logs corroborated the application behavior, although the original application ETL data for the sampled date was no longer available.
 
 A subsequent policy change moved Windows Delivery Optimization from download mode `2` to mode `1`. In the post-change capture, no traffic matched the previously observed enterprise-public-address and port-7680 pattern.
 
-The investigation established the cause of sampled and repeatedly correlated TCP/7680 flows. It did not independently attribute every event in the full 211-million-event population.
+The investigation established the cause of sampled and repeatedly correlated TCP/7680 flows. It did not independently attribute every record in the full dashboard population.
 
 The article’s primary contribution is therefore not a population-wide claim about Windows Delivery Optimization. It is a reusable multi-plane method for tracing an opaque firewall event through translation state to the originating endpoint and application behavior.
 
@@ -36,7 +38,7 @@ A sanitized Cisco Secure Firewall event may resemble the following:
 
 ```text
 Deny TCP reverse path check from <PAT-A>
-to <PAT-B> on interface <OUTSIDE-B>
+to <PAT-B> on interface Outside-B
 ```
 
 The event establishes several useful facts:
@@ -70,43 +72,15 @@ Reverse-path filtering is an important anti-spoofing control, but strict validat
 The investigation used evidence from three primary planes and connected them through a normalized timeline.
 
 ```text
-+--------------------------+
-|      SECURITY PLANE      |
-|                          |
-| - 106021 event           |
-| - ASP drop capture       |
-| - Ingress interface      |
-| - Drop reason            |
-| - Translated packet      |
-+------------+-------------+
-             |
-             v
-+--------------------------+
-|    TRANSLATION PLANE     |
-|                          |
-| - NAT/PAT mapping        |
-| - Local and global ports |
-| - Internal source        |
-| - Translation state      |
-+------------+-------------+
-             |
-             v
-+--------------------------+
-|       ENDPOINT PLANE     |
-|                          |
-| - Host packet capture    |
-| - Application logs       |
-| - Registry/policy state  |
-| - Process or service     |
-+------------+-------------+
-             |
-             v
-+--------------------------+
-|  NORMALIZED EVENT TIME   |
-|                          |
-| Tuple + flags + cadence  |
-| + observation window     |
-+--------------------------+
++--------------------------+     +--------------------------+     +--------------------------+     +--------------------------+
+|      SECURITY PLANE      |     |    TRANSLATION PLANE     |     |       ENDPOINT PLANE     |     |  NORMALIZED EVENT TIME   |
+|                          |     |                          |     |                          |     |                          |
+| - 106021 event           |     | - NAT/PAT mapping        |     | - Host packet capture    |     | Tuple + flags + cadence  |
+| - ASP drop capture       | --> | - Local and global ports | --> | - Application logs       | --> | + observation window     |
+| - Ingress interface      |     | - Internal source        |     | - Registry/policy state  |     |                          |
+| - Drop reason            |     | - Translation state      |     | - Process or service     |     |                          |
+| - Translated packet      |     |                          |     |                          |     |                          |
++--------------------------+     +--------------------------+     +--------------------------+     +--------------------------+
 ```
 
 Each plane answers a different question.
@@ -135,22 +109,10 @@ The method does not treat any single data source as sufficient. It relies on agr
 
 The case involved an enterprise perimeter with multiple public PAT addresses serving different internal network groups.
 
-> **Diagram placeholder — Figure 0: Sanitized topology and evidence-bounded packet path**
->
-> **Placement:** Insert the topology diagram here, immediately after the opening paragraph of Section 3 and before the address-label definitions below.
->
-> **Required elements:**
->
-> 1. `<INTERNAL-HOST>` initiating a TCP SYN to `<PAT-B>:7680`.
-> 2. The perimeter firewall translating the source to `<PAT-A>:<XLATE-PORT>`.
-> 3. A dashed segment labeled **Provider-side path not captured**.
-> 4. The translated SYN appearing on `<OUTSIDE-B>` as `<PAT-A>:<XLATE-PORT> -> <PAT-B>:7680`.
-> 5. The uRPF decision and `rpf-violated` drop.
-> 6. A legend distinguishing **directly observed**, **derived from NAT state**, and **inferred/not captured** segments.
->
-> **Design note:** Use solid arrows for directly observed transitions, a different line treatment for NAT-derived identity mapping, and dashed arrows for the uncaptured external transit segment. Do not draw a specific ISP route or claim a firewall hairpin unless separate evidence establishes it.
->
-> **Caption:** *Figure 0 — Sanitized topology and evidence-bounded packet path. Endpoint, NAT, and firewall evidence establish the source connection, translation, external re-entry, and uRPF drop. The intermediate provider path was not captured and is intentionally shown as an unobserved segment.*
+<!-- FIGURE 1 REFERENCE PLACEHOLDER -->
+![Figure 1 — Sanitized topology and evidence-bounded packet path](publication_assets/figure-1-topology.png)
+
+*Figure 1 — Sanitized topology and evidence-bounded packet path. Endpoint evidence establishes the original TCP connection from `<INTERNAL-HOST>:51543` to `<PAT-B>:7680`. NAT state associates that socket with the translated public source `<PAT-A>:51543`, and ASP evidence shows the translated SYN appearing on `Outside-B` toward `<PAT-B>:7680`, where it fails reverse-path validation. The intermediate provider-side transit was not captured and is intentionally shown as an unobserved segment.*
 
 In this model:
 
@@ -159,16 +121,20 @@ In this model:
 - `<INTERNAL-HOST>` represents the originating Windows endpoint.
 - TCP `7680` represents the observed destination service.
 
-The exact provider-side path was not captured. The planned diagram therefore represents the logical packet sequence supported by endpoint, NAT, and firewall evidence rather than claiming visibility into every external hop.
+The exact provider-side path was not captured. Figure 1 therefore represents the logical packet sequence supported by endpoint, NAT, and firewall evidence rather than claiming visibility into every external hop.
 
 The investigative question was:
 
-> Why would an internal connection translated behind Public PAT Address A attempt to reach Public PAT Address B, and why would the translated packet fail reverse-path validation when it appeared on an external ingress interface?
+> Why would an internal connection translated behind `<PAT-A>` attempt to reach `<PAT-B>`, and why would the translated packet fail reverse-path validation when it appeared on an external ingress interface?
 
 
 ### Environment versions
 
-> **Author verification required before submission:** Add the deployed Cisco Secure Firewall Threat Defense/Lina version, Firewall Management Center version, Windows edition and build, and the Delivery Optimization policy source used for the tested endpoint (for example, Group Policy, MDM, or local policy). These details matter because command syntax, event presentation, and Delivery Optimization policy behavior can vary by release.
+- Cisco Secure Firewall 7.6.4 managed by FMC 7.6.5 (build 106)
+- Windows 11 Enterprise 25H2 (build 26200.8457)
+- Delivery Optimization configured through Group Policy
+
+<!-- AUTHOR VERIFICATION PLACEHOLDER: Confirm whether the FTD/Lina sensor that produced the ASP timestamps was synchronized to the same enterprise NTP source as the workstation. If confirmed, replace the cautious timestamp-source wording in Sections 6 and A.4 with “The FTD sensor and workstation were synchronized to the same enterprise NTP service.” Add exact minor releases where disclosure is permitted. -->
 
 
 ## 4. Initial Explanations Considered
@@ -191,19 +157,28 @@ The goal was not to select the most plausible explanation immediately. It was to
 
 ### 5.1 Profile the event population
 
-Approximately 211.65 million `106021` records were reported for the May 1-to-June 1, 2026 observation window. Approximately 64.46 million involved the small group of enterprise-owned public PAT addresses central to the investigation.
+The Elastic-based Cisco Secure Firewall dashboard reported about **237.4 million** `106021` records during the 30-day window from June 1, 2026, at 00:00 through July 1, 2026, at 00:00. The base result represented two firewalls.
+
+The investigation then added a `source.ip` filter containing the selected enterprise-owned PAT address group. The filtered result returned about **73.5 million** records and was concentrated on one firewall. No destination-IP criterion was included in this subset. The filtered count represented about 31% of the base dashboard result, but that percentage describes dashboard concentration, not causal attribution.
+
+This concentration was operationally significant. It showed that a substantial part of the reverse-path event population involved packets whose apparent source matched one of a small number of enterprise-owned translated addresses. It did not establish that every record in either result shared the same cause.
 
 #### Event-count method
 
-The totals were obtained from Cisco `106021` records presented in the organization's Elastic-based security telemetry environment for the stated reporting window. The PAT-address subset was defined by records in which either the apparent source or destination matched the selected enterprise-owned PAT address group.
+The population was measured from the **Cisco Secure Firewall Overview** dashboard. The base query was:
 
-> **Author verification required before submission:** Insert the exact Elastic data view or index, query language and query string, inclusive/exclusive start and end timestamps, reporting-window timezone, whether the figures count individual ingested events or dashboard aggregations, and the method used to check for duplicate ingestion. Use a form such as:
->
-> `Event totals were calculated from <raw records/dashboard aggregation> in <Elastic data view> from <start timestamp, timezone, and boundary rule> through <end timestamp, timezone, and boundary rule> using <exact query>. The PAT subset included records where <source field> or <destination field> matched <sanitized address group>. <Duplicate-ingestion check or statement that no deduplication was performed>.`
+```text
+event.code : "106021"
+```
 
-Until those query details are inserted, the two values should remain described as **approximately** 211.65 million and **approximately** 64.46 million rather than as audit-grade counts.
+The enterprise-PAT subset was produced by adding a dashboard filter that ORed the selected PAT addresses in the `source.ip` field. The displayed time range was June 1, 2026, at 00:00 through July 1, 2026, at 00:00.
 
-That concentration was important. Instead of treating the event population as random internet noise, the investigation could focus on a recurring relationship between specific public addresses.
+The dashboard displayed `237.42m` total records for the base query and `73.52m` after the source-IP filter was applied. These are dashboard-reported values. The screenshots do not independently establish the underlying Elastic data view, raw-document versus dashboard-aggregation behavior, or duplicate-ingestion treatment.
+
+<!-- FIGURE 2 REFERENCE PLACEHOLDER -->
+![Figure 2 — Dashboard-reported 106021 population and enterprise-PAT source subset](publication_assets/figure-2-dashboard-population.png)
+
+*Figure 2 — Dashboard-reported `106021` population and enterprise-PAT source subset. The June 1-to-July 1 base query returned `237.42m` records across two firewalls. Applying the selected enterprise-owned PAT-address filter to `source.ip` returned `73.52m` records concentrated on one firewall. Counts are dashboard-reported values and were not independently deduplicated at the raw-document level.*
 
 Event volume alone did not establish root cause. A large number of similar logs can result from:
 
@@ -219,7 +194,7 @@ The volume justified investigation, but it did not prove asymmetry.
 **What this step established**
 
 - The condition was persistent.
-- A limited number of address pairs accounted for a substantial portion of the reported events.
+- The selected enterprise-owned PAT source subset accounted for a substantial part of the dashboard result.
 - The pattern was structured enough to support targeted packet capture.
 
 **What this step did not establish**
@@ -255,7 +230,7 @@ This changed the direction of the investigation. A repeated destination port sug
 
 - Which internal endpoint generated the connection
 - Whether PAT preserved the original source port
-- Whether every event in the full population used TCP/7680
+- Whether every record in the full dashboard population used TCP/7680
 - Which application selected the destination
 
 ### 5.3 Correlate the packet with NAT state
@@ -315,7 +290,7 @@ The endpoint capture independently confirmed that the private host initiated the
 
 **What this step established**
 
-- The endpoint intentionally initiated the sampled TCP/7680 connection.
+- The endpoint generated the sampled TCP/7680 connection.
 - The local socket matched the active NAT mapping.
 - Retransmissions contributed multiple firewall drops for one failed connection attempt.
 
@@ -340,7 +315,7 @@ The following table reconstructs one sampled connection. Addresses are represent
 
 The SYN flag and sequence-number terminology in the packet evidence follow the TCP specification in [RFC 9293](https://www.rfc-editor.org/rfc/rfc9293.html).
 
-The firewall and workstation were synchronized to the same enterprise NTP service. The seven-hour difference between their displayed timestamps resulted from timezone configuration: the firewall recorded timestamps in UTC, while the workstation packet capture displayed PDT, or UTC−7, on the collection date. Converting the firewall timestamps from UTC to PDT aligned the five corresponding SYN attempts. A consistent residual difference of approximately 328–329 milliseconds remained between the ASP and endpoint timestamps. This residual is treated as a capture-clock or timestamping offset rather than packet transit time. The matching tuples and retransmission intervals provide the stronger basis for correlating the records.
+The firewall-side timestamps were recorded in UTC, while the workstation packet capture displayed PDT, or UTC−7, on the collection date. Converting the firewall timestamps from UTC to PDT aligned the five corresponding SYN attempts. The firewall-management platform and workstation were synchronized to the same enterprise NTP service. A consistent residual difference of approximately 328–329 milliseconds remained between the ASP and endpoint timestamps. Because the complete timestamp-production path from the FTD/Lina sensor through the management platform was not independently measured, the residual is treated as a capture-point or timestamping offset rather than packet transit time. The matching tuples, port mapping, TCP state, and retransmission intervals provide the stronger basis for correlating the records.
 
 ### 6.1 Retransmission-sequence comparison
 
@@ -361,7 +336,7 @@ The retry intervals also aligned:
 | Retry 2 to retry 3 | approximately `4.013 s` | approximately `4.013 s` |
 | Retry 3 to retry 4 | approximately `8.001 s` | approximately `8.000 s` |
 
-After converting the firewall’s UTC timestamps to the workstation’s PDT display timezone, the endpoint and ASP captures showed the same five-attempt TCP SYN sequence. Corresponding packets retained a stable 328–329 ms residual timestamp offset, while their retransmission intervals aligned at approximately one, two, four, and eight seconds. Because both systems used the same enterprise NTP source, the seven-hour difference was attributable to timezone display rather than clock drift. The residual offset was not interpreted as network latency; correlation rested on the matching tuple, TCP state, port mapping, and retransmission cadence.
+After converting the firewall’s UTC timestamps to the workstation’s PDT display timezone, the endpoint and ASP captures showed the same five-attempt TCP SYN sequence. Corresponding packets retained a stable 328–329 ms residual timestamp offset, while their retransmission intervals aligned at approximately one, two, four, and eight seconds. The seven-hour difference was attributable to timezone display rather than clock drift. The residual offset was not interpreted as network latency; correlation rested on the matching tuple, TCP state, port mapping, observation window, and retransmission cadence.
 
 The matching cadence is stronger evidence than a claim of exact zero-millisecond alignment.
 
@@ -372,9 +347,9 @@ The flow was associated across the evidence sources using:
 - TCP as the transport protocol
 - The private endpoint address
 - Local source port `51543`
-- Translated Public PAT Address A
+- Translated `<PAT-A>`
 - Translated source port `51543`
-- Public PAT Address B
+- `<PAT-B>`
 - Destination port `7680`
 - TCP SYN state
 - Repeated retransmission behavior
@@ -383,15 +358,10 @@ The flow was associated across the evidence sources using:
 
 The `106021` event did not contain ports. It was therefore supporting same-window enforcement evidence rather than an independently complete flow record. The ASP capture supplied the missing Layer 4 tuple.
 
-> **Figure 1 placeholder — Correlated sampled flow**
->
-> **Placement:** Insert Figure 1 here, at the end of Section 6 after the explanation of how the flow was correlated and before the evidence-classification table.
->
-> **Required panels:** Four readable, sanitized crops arranged in evidence order: (A) the `106021` event, (B) the five-line ASP drop sequence, (C) the active NAT mapping, and (D) the endpoint SYN/retransmission sequence. Place the normalized timeline table and retransmission-cadence table directly beneath the panel grid.
->
-> **Annotation requirements:** Highlight source port `51543`, destination port `7680`, the translated public source, the destination PAT address, TCP SYN state, and the five corresponding timestamps. Use callout labels rather than relying on the reader to locate values in raw screenshots.
->
-> **Caption:** *Figure 1 — Cross-plane correlation for one sampled TCP/7680 flow. The endpoint capture, NAT mapping, and ASP drop share the associated port and address relationships. The firewall and workstation used the same enterprise NTP source, but the firewall displayed UTC while the workstation displayed PDT. After UTC-to-PDT normalization, the endpoint and ASP SYN sequences maintained an approximately 328–329 ms residual offset. The matching five-attempt retransmission cadence supports attribution to the same flow. The syslog provides corresponding Layer 3 enforcement context but does not contain port information. The figure proves correlation for the sampled flow; it does not attribute the complete event population.*
+<!-- FIGURE 3 REFERENCE PLACEHOLDER -->
+![Figure 3 — Cross-plane correlation for one sampled TCP/7680 flow](publication_assets/figure-3-correlated-sample-flow.png)
+
+*Figure 3 — Cross-plane correlation for one sampled TCP/7680 flow. Panel A shows the endpoint SYN and retransmission sequence; Panel B shows the active NAT mapping; Panel C shows the corresponding translated ASP sequence; and Panel D shows the `106021` enforcement event. After UTC-to-PDT normalization, the endpoint and ASP SYN sequences maintained an approximately 328–329 ms residual offset and matching one-, two-, four-, and eight-second retry cadence. The syslog provides Layer 3 enforcement context but does not contain port information. The figure supports correlation for the sampled flow; it does not attribute the full dashboard population.*
 
 ---
 
@@ -439,17 +409,10 @@ The combined evidence strongly supports Windows Delivery Optimization as the sou
 
 The best-supported explanation is that the endpoint learned or received the enterprise public address as a Delivery Optimization peer candidate. The investigation did not directly capture the cloud service returning that address.
 
-> **Figure 2 placeholder — Delivery Optimization attribution**
->
-> **Placement:** Insert Figure 2 here, immediately after the application-attribution conclusion and before Section 9.
->
-> **Required panels:**
->
-> - **Panel A:** Sanitized pre-change registry crop showing `DODownloadMode = 2` and, where readable and safe to disclose, the presence of the configured Group ID value.
-> - **Panel B:** Readable sanitized excerpt of the June 28 Delivery Optimization logs showing `initiating peer connection` toward the same public-address group on TCP/7680.
-> - Add a visible label above Panel B: **Later corroborating evidence — not the June 25 sampled timestamp**.
->
-> **Caption:** *Figure 2 — Delivery Optimization configuration and later corroborating application evidence. The registry confirms group-mode configuration, and later Delivery Optimization records show peer attempts toward the same enterprise public-address group on TCP/7680. The application records are from a later date and are corroborating evidence, not part of the exact sampled-flow timestamp chain.*
+<!-- FIGURE 4 REFERENCE PLACEHOLDER -->
+![Figure 4 — Delivery Optimization configuration and later corroborating application evidence](publication_assets/figure-4-application-attribution.png)
+
+*Figure 4 — Delivery Optimization configuration and later corroborating application evidence. Panel A confirms the pre-change mode-2 policy. Panel B shows later Delivery Optimization records containing peer-connection attempts toward the same enterprise-owned public-address group on TCP/7680. The application records are from June 28 and are corroborating evidence, not part of the exact June 25 sampled-flow timestamp chain.*
 
 ## 9. Reconstructing the Sampled Packet Lifecycle
 
@@ -457,9 +420,9 @@ The sampled flow can be described without asserting an unobserved provider-side 
 
 1. **Observed at the endpoint:** The internal host sent a TCP SYN from local source port `51543` to an enterprise-owned public address on destination port `7680`.
 
-2. **Observed in NAT state:** The firewall had an active mapping from the private endpoint and local port to Public PAT Address A and translated port `51543`.
+2. **Observed in NAT state:** The firewall had an active mapping from the private endpoint and local port to `<PAT-A>` and translated port `51543`.
 
-3. **Observed in the ASP capture:** A SYN from Public PAT Address A and port `51543` appeared on the external ingress path toward Public PAT Address B on port `7680`.
+3. **Observed in the ASP capture:** A SYN from `<PAT-A>` and port `51543` appeared on the external ingress path toward `<PAT-B>` on port `7680`.
 
 4. **Observed in firewall enforcement:** The translated SYN failed reverse-path validation and was recorded as `rpf-violated`. A corresponding `106021` event identified the same public source, public destination, and external interface.
 
@@ -483,13 +446,13 @@ The complete provider-side route between external egress and external re-entry w
 | **Firewall defect** | Not supported; ASP and syslog evidence showed repeatable reverse-path enforcement consistent with the configured behavior |
 | **Delivery Optimization peer behavior** | Best-supported explanation based on endpoint traffic, NAT correlation, configuration, later application logs, and post-change disappearance of the targeted pattern |
 
-This assessment does not establish that asymmetric routing was absent from every event in the observation period. It establishes that the sampled connection was endpoint-generated and that persistent asymmetry was not the best-supported primary explanation for the repeated TCP/7680 pattern.
+This assessment does not establish that asymmetric routing was absent from every record in the dashboard observation window. It establishes that the sampled connection was endpoint-generated and that persistent asymmetry was not the best-supported primary explanation for the repeated TCP/7680 pattern.
 
 ## 11. Root Cause
 
 For the sampled and correlated flows, an internal Windows endpoint initiated Delivery Optimization peer connections to enterprise-owned public PAT addresses over TCP/7680. Active NAT state mapped the endpoint socket to the apparent public source in the ASP capture, where the translated SYN failed reverse-path validation and generated the associated `106021` context.
 
-After `DODownloadMode` changed from `2` to `1`, the targeted public-address/7680 pattern was absent from the post-change endpoint capture. This intervention strengthens the conclusion that Delivery Optimization peer scope drove the sampled connection pattern. It does not prove that every event in the full 211-million-event population had the same origin.
+After `DODownloadMode` changed from `2` to `1`, the targeted public-address/7680 pattern was absent from the post-change endpoint capture. This intervention strengthens the conclusion that Delivery Optimization peer scope drove the sampled connection pattern. It does not prove that every record in the full dashboard population had the same origin.
 
 ## 12. Operational Response
 
@@ -500,8 +463,8 @@ The corrective action should target the source behavior rather than weaken rever
 Review Delivery Optimization settings including:
 
 - `DODownloadMode`
-- `DOGroupId`
-- `DOGroupIdSource`
+- `DOGroupID`
+- `DOGroupIDSource`
 - `DORestrictPeerSelectionBy`
 - Server and workstation policy separation
 - Site and subnet boundaries
@@ -580,7 +543,7 @@ It does not prove that:
 - The pattern was permanently eliminated
 - All `106021` events were removed
 - Delivery Optimization activity was identical during both captures
-- The broader event population had only one root cause
+- The broader dashboard population had only one root cause
 
 ### 13.2 Test conditions documented by the artifacts
 
@@ -599,18 +562,10 @@ It does not prove that:
 | Equivalent update workload | Not documented |
 | Delivery Optimization actively downloading during both captures | Not demonstrated |
 
-> **Figure 3 placeholder — Intervention and post-change validation**
->
-> **Placement:** Insert Figure 3 here, after the test-conditions table and before Section 14.
->
-> **Required panels:**
->
-> - **Panel A:** Sanitized post-change registry crop showing `DODownloadMode = 1`.
-> - **Panel B:** Before-change capture crop showing packets matching the public-address/7680 pattern and the status-bar counts `Packets: 1320` and `Displayed: 136`.
-> - **Panel C:** Post-change capture crop showing no displayed packets and the status-bar counts `Packets: 353129` and `Displayed: 0`.
-> - **Panel D or inset table:** The four-column before/after table from Section 13.1, without percentages.
->
-> **Caption:** *Figure 3 — Intervention and post-change endpoint validation. After Delivery Optimization changed from mode 2 to mode 1, the subsequent capture contained 353,129 total packets and zero matches for the targeted public-address/7680 pattern. Capture duration and Delivery Optimization workload were not controlled, so the figure demonstrates absence of the pattern during the observed window rather than a normalized reduction rate or permanent enterprise-wide elimination.*
+<!-- FIGURE 5 REFERENCE PLACEHOLDER -->
+![Figure 5 — Intervention and post-change endpoint validation](publication_assets/figure-5-post-change-validation.png)
+
+*Figure 5 — Intervention and post-change endpoint validation. Panel A confirms `DODownloadMode = 1`. Panel B shows the before-change targeted capture with `1,320` total packets and `136` displayed matches. Panel C shows the post-change targeted capture with `353,129` total packets and zero displayed matches. Capture duration and Delivery Optimization workload were not controlled, so the figure demonstrates absence of the pattern during the observed window rather than a normalized reduction rate or permanent enterprise-wide elimination.*
 
 ## 14. Reusable Investigation Workflow
 
@@ -722,7 +677,7 @@ Repeat the targeted capture and compare:
 
 ### 15.1 Not every event was individually correlated
 
-The investigation directly correlated sampled TCP/7680 flows across endpoint traffic, NAT state, ASP drops, and firewall events. It did not individually attribute every event in the full 211-million-event population.
+The investigation directly correlated sampled TCP/7680 flows across endpoint traffic, NAT state, ASP drops, and firewall events. It did not individually attribute every record in the full dashboard population.
 
 ### 15.2 The application log was not from the exact sampled timestamp
 
@@ -742,7 +697,7 @@ The post-change endpoint capture showed no traffic matching the previously obser
 
 ### 15.6 Long-term event-volume validation remains outstanding
 
-Longer-term firewall or SIEM measurements are required to determine what percentage of the broader `106021` population was removed by the policy change.
+Longer-term firewall or SIEM measurements are required to determine what percentage of the broader dashboard `106021` population was removed by the policy change.
 
 ### 15.7 Behavior depends on architecture
 
@@ -763,7 +718,7 @@ The multi-plane correlation method is reusable, but the packet path and remediat
 
 ## 16. Conclusion
 
-The investigation began with approximately 211 million reverse-path events and an apparent relationship between enterprise public PAT addresses. The firewall syslog alone could not determine whether the traffic represented spoofing, path asymmetry, NAT behavior, or an endpoint application.
+The investigation began with about 237.4 million dashboard-reported reverse-path events and an apparent relationship between enterprise public PAT addresses. The firewall syslog alone could not determine whether the traffic represented spoofing, path asymmetry, NAT behavior, or an endpoint application.
 
 The sampled evidence chain established that:
 
@@ -774,7 +729,7 @@ The sampled evidence chain established that:
 - Delivery Optimization configuration and later application logs supported Windows Delivery Optimization as the originating service.
 - After `DODownloadMode` changed from `2` to `1`, the targeted public-address/7680 pattern was absent from a subsequent endpoint capture.
 
-The evidence directly explains sampled and repeatedly correlated flows. It does not independently attribute every event in the complete event population.
+The evidence directly explains sampled and repeatedly correlated flows. It does not independently attribute every record in the complete dashboard population.
 
 The lasting engineering contribution is the method:
 
@@ -812,7 +767,13 @@ show capture <CAPTURE_NAME> | include <PAT-A>
 
 Sanitized output format:
 
-$$\text{23\:26\:18.173193} \quad \text{PAT-A\.51543 \> PAT-B\.7680\: S} \text{ \<} \text{SEQUENCE\>\:} \text{ \<} \text{SEQUENCE\> \(0\) \.\.\. Drop-reason: \(rpf-violated\)} $$
+```text
+23:26:18.173193
+<PAT-A>.51543 > <PAT-B>.7680:
+S <SEQUENCE>:<SEQUENCE>(0)
+Drop-reason: (rpf-violated)
+Reverse-path verify failed
+```
 
 Record:
 
@@ -870,7 +831,7 @@ Before comparing captures:
 
 A stable sub-second offset may still support correlation when tuple and retransmission behavior agree.
 
-In this investigation, the firewall and workstation were synchronized to the same enterprise NTP source. The firewall recorded UTC, while the endpoint capture displayed PDT. The seven-hour display difference was normalized before comparing events. The remaining 328–329 ms residual was treated as a timestamping or capture-point offset, not as measured network latency.
+In this investigation, the firewall-management platform and workstation were synchronized to the same enterprise NTP source. The firewall-side records were displayed in UTC, while the endpoint capture displayed PDT. The seven-hour display difference was normalized before comparing events. Because the complete timestamp-production path from the FTD/Lina sensor through the management platform was not independently measured, the remaining 328–329 ms residual was treated as a timestamping or capture-point offset, not as measured network latency.
 
 ## A.5 Capture the endpoint flow
 
@@ -904,8 +865,8 @@ Record:
 Relevant evidence may include:
 
 - `DODownloadMode`
-- `DOGroupId`
-- `DOGroupIdSource`
+- `DOGroupID`
+- `DOGroupIDSource`
 - Delivery Optimization event or ETL logs
 - Peer information
 - Endpoint-management policy
@@ -919,9 +880,16 @@ Use explicit Boolean grouping so the address restriction applies to both transpo
 
 $$\text{ip.addr } {in} \lbrace \text{PAT-A} \, \text{ PAT-B} \, \text{ PAT-C } \rbrace \text{ } {and} \text{ \( tcp\.port \=\= 7680} {or} \text{ udp\.port \=\= 7680\)} $$
 
+Copyable Wireshark form:
+
+```text
+ip.addr in {<PAT-A>, <PAT-B>, <PAT-C>}
+and (tcp.port == 7680 or udp.port == 7680)
+```
+
 The evidence screenshots displayed the following unparenthesized expression:
 
-$$\text{ip.addr } {in} \lbrace \text{PAT-A} \, \text{ PAT-B} \rbrace \text{ } {and} \text{ tcp\.port \=\= 7680} {or} \text{ udp\.port \=\= 7680} $$
+$$\text{ip.addr } {in} \lbrace \text{PAT-A} \, \text{ PAT-B} \, \text{ PAT-C } \rbrace \text{ } {and} \text{ tcp\.port \=\= 7680} {or} \text{ udp\.port \=\= 7680} $$
 
 Because `and` and `or` precedence can make the UDP condition evaluate more broadly than intended, future captures should use the parenthesized form. The same visible expression was used in the supplied before-and-after screenshots, and the post-change capture displayed zero matches; nevertheless, the corrected filter is preferable for a controlled repeat test.
 
@@ -937,7 +905,7 @@ Document:
 
 # References
 
-The article uses inline citations at the claims they support. The following list provides the complete source titles for editorial review.
+Inline citations appear at the claims they support. The following sources provide the complete publication details and working hyperlinks.
 
 1. Cisco Systems. [*Cisco Secure Firewall Threat Defense Syslog Messages — System Health and Network Diagnostic Messages Listed by Severity Level*](https://www.cisco.com/c/en/us/td/docs/security/firepower/Syslogs/fptd_syslog_guide/syslogs-sev-level.html). Includes the `%FTD-1-106021` message format.
 2. Cisco Systems. [*Cisco Secure Firewall ASA Series Syslog Messages — Message 106021*](https://www.cisco.com/c/en/us/td/docs/security/asa/syslog/asa-syslog/syslog-messages-101001-to-199021.html). Provides the reverse-path-check explanation and recommended response.
@@ -950,14 +918,3 @@ The article uses inline citations at the claims they support. The following list
 9. Microsoft. [*How Delivery Optimization works*](https://learn.microsoft.com/en-us/windows/deployment/do/delivery-optimization-workflow). Describes peer discovery, TCP/7680, and NAT behavior for Delivery Optimization modes.
 10. Baker, F., and Savola, P. [*Ingress Filtering for Multihomed Networks*](https://www.rfc-editor.org/rfc/rfc3704.html). RFC 3704, BCP 84, March 2004.
 11. Eddy, W., ed. [*Transmission Control Protocol (TCP)*](https://www.rfc-editor.org/rfc/rfc9293.html). RFC 9293, STD 7, August 2022.
-
-## Pre-Publication Figure Checklist
-
-- [ ] Replace Figure 0 and Figures 1–3 at the exact placements specified in their placeholder blocks; use readable crops rather than the original one-page collages.
-- [ ] Remove or mask public IP addresses, private IP addresses, hostnames, domains, Group IDs, and firewall names.
-- [ ] Retain ports, timestamps, TCP flags, and translated relationships needed to support the evidence chain.
-- [ ] Add a caption stating what each figure proves and what it does not prove.
-- [ ] Confirm that the final article renders tables and code blocks correctly on the target platform.
-- [ ] Add the deployed FTD, FMC, and Windows versions if disclosure is permitted.
-- [ ] Complete the Section 5.1 event-count method with the exact Elastic index/data view, query, timezone boundaries, raw-versus-aggregate definition, and duplicate-ingestion check.
-- [ ] Add a longer-term pre/post SIEM comparison when available.
