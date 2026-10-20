@@ -1,0 +1,10 @@
+# Python runtime artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+# Generated local reports and editor state
+lab01_network_assurance/lab01_report*.json
+.vscode/
+.DS_Store

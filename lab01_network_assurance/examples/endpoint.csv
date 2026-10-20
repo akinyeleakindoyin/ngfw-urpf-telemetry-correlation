@@ -1,0 +1,3 @@
+endpoint_id,timestamp,protocol,src_ip,src_port,dst_ip,dst_port,tcp_flags
+END-001,2026-10-20T15:00:00.280Z,TCP,10.0.1.50,51543,198.51.100.7,7680,SYN
+END-002,2026-10-20T15:03:00.240Z,TCP,10.0.1.51,50000,198.51.100.7,7680,SYN
