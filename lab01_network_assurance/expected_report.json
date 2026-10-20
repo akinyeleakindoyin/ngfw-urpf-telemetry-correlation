@@ -1,0 +1,70 @@
+{
+  "lab": "Lab 01 v0.2 — synthetic multi-plane network assurance",
+  "disclaimer": "All observations are synthetic. This code was NOT used in any employer investigation.",
+  "matching_window_seconds": 2,
+  "timeline_pair_tolerance_seconds": 0.3,
+  "correlations": [
+    {
+      "asp_id": "ASP-001",
+      "status": "CORRELATED_SAMPLE",
+      "public_tuple": "203.0.113.12:51543 -> 198.51.100.7:7680",
+      "syslog_context_ids": [
+        "SYS-001"
+      ],
+      "nat_candidate_count": 1,
+      "inside_sockets": [
+        "10.0.1.50:51543"
+      ],
+      "endpoint_observation_count": 1,
+      "timeline_assessment": {
+        "status": "SEQUENCE_CONSISTENT",
+        "firewall_syn_count": 5,
+        "endpoint_syn_count": 5,
+        "firewall_intervals_s": [
+          1,
+          2,
+          4,
+          8
+        ],
+        "endpoint_intervals_s": [
+          1,
+          2,
+          4,
+          8
+        ],
+        "max_pair_time_difference_s": 0.08,
+        "illustrative_backoff_consistent": true,
+        "limitation": "The SYN timestamps/tuples are consistent across two synthetic observation planes. Clock synchronization, retransmission identity, complete transit, application owner and a general root cause are NOT established."
+      },
+      "limitation": "Matching packet and active translation support this sampled flow only. Syslog has no ports; application identity, full transit and overall cause are NOT proven."
+    },
+    {
+      "asp_id": "ASP-002",
+      "status": "AMBIGUOUS",
+      "public_tuple": "203.0.113.12:60001 -> 198.51.100.7:7680",
+      "syslog_context_ids": [
+        "SYS-002"
+      ],
+      "nat_candidate_count": 2,
+      "inside_sockets": [
+        "10.0.1.51:50000",
+        "10.0.1.52:50001"
+      ],
+      "endpoint_observation_count": 0,
+      "timeline_assessment": {
+        "status": "NOT_ASSESSED",
+        "limitation": "A unique NAT candidate and endpoint observation are prerequisites."
+      },
+      "limitation": "Multiple different inside sockets share the observed translated tuple in this time window."
+    }
+  ],
+  "unpaired_syslog_ids": [
+    "SYS-003"
+  ],
+  "warnings": [
+    "A 106021 record lacks Layer 4 ports and cannot uniquely identify a PAT translation.",
+    "Compatible SYN timing is not proof of application identity, full packet transit, a unique flow, or causality.",
+    "Timing comparison assumes reasonably aligned clocks; ISO offsets are normalized, but unknown clock skew is not estimated.",
+    "The illustrative 1/2/4/8-second backoff is not a universal TCP retransmission timing guarantee."
+  ]
+}
